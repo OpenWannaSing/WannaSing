@@ -450,8 +450,3 @@ backdrop-blur-xl      /* 20px */
 | 版本 | 日期 | 更新内容 |
 |------|------|----------|
 | 1.0.0 | 2026-05-17 | 初始版本 |
-
----
-
-> 本文档由 UI Style Guide Generator 自动生成
-> 项目地址: https://github.com/OpenWannaSing/web

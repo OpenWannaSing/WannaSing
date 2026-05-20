@@ -34,3 +34,8 @@ env/
 *.aab
 *.ipa
 *.app
+
+# WannaSing 数据
+.wannasing/
+wanasing.db
+*.db
