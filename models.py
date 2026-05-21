@@ -1,7 +1,62 @@
-from sqlalchemy import Column, Integer, String, Float, Text, JSON, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Text, JSON, DateTime, ForeignKey, DECIMAL
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
+
+class AudioMetadata(Base):
+    __tablename__ = "audio_metadata"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    file_key = Column(String(500), unique=True, nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True)
+    mime_type = Column(String(50), default='audio/mpeg')
+    duration = Column(Integer, default=0)
+    user_id = Column(Integer, nullable=False, index=True)
+    business_type = Column(String(30), nullable=False, index=True)
+    business_id = Column(Integer, nullable=True)
+    status = Column(String(20), default='active')
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class Performance(Base):
+    __tablename__ = "performances"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    song_name = Column(String(200), nullable=True)
+    artist = Column(String(100), nullable=True)
+    score = Column(DECIMAL(5, 2), nullable=True)
+    original_audio_id = Column(Integer, ForeignKey('audio_metadata.id'), nullable=True)
+    tuned_audio_id = Column(Integer, ForeignKey('audio_metadata.id'), nullable=True)
+    status = Column(String(20), default='active')
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class AICreation(Base):
+    __tablename__ = "ai_creations"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    title = Column(String(200), nullable=True)
+    style = Column(String(50), nullable=True)
+    audio_id = Column(Integer, ForeignKey('audio_metadata.id'), nullable=True)
+    preview_audio_id = Column(Integer, ForeignKey('audio_metadata.id'), nullable=True)
+    duration = Column(Integer, nullable=True)
+    play_count = Column(Integer, default=0)
+    status = Column(String(20), default='active')
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(50), unique=True, nullable=False)
+    email = Column(String(100), unique=True, nullable=True)
+    nickname = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class SongAnalysis(Base):
     __tablename__ = "song_analysis"

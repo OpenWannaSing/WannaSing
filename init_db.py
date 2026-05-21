@@ -1,9 +1,8 @@
 import asyncio
 from database import engine, Base
-from models import SongAnalysis, UserProfile
+from models import SongAnalysis, UserProfile, AudioMetadata, Performance, AICreation, User
 
 async def init_database():
-    """初始化数据库表"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("✅ 数据库表创建成功！")

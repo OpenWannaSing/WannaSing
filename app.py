@@ -1,8 +1,10 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from typing import Optional
 import uuid
 import asyncio
 import os
@@ -10,7 +12,8 @@ import tempfile
 from datetime import datetime
 from services import PitchAnalyzer, RhythmAnalyzer, StructureAnalyzer, DifficultyScorer
 from database import get_db, engine
-from models import SongAnalysis, Base
+from models import SongAnalysis, Base, AudioMetadata, Performance, User
+from audio_service import audio_storage
 
 app = FastAPI(title="WanaSing API", version="1.0")
 
@@ -249,6 +252,115 @@ async def get_analysis_history(skip: int = 0, limit: int = 10, db: AsyncSession 
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.post("/api/v1/upload")
+async def upload_audio(
+    file: UploadFile = File(...),
+    user_id: int = Form(...),
+    business_type: str = Form(...),
+    db: AsyncSession = Depends(get_db)
+):
+    allowed_extensions = ['.mp3', '.wav', '.m4a']
+    file_ext = f".{file.filename.split('.')[-1]}".lower()
+    if file_ext not in allowed_extensions:
+        raise HTTPException(400, f"不支持的文件类型，仅支持: {allowed_extensions}")
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    
+    try:
+        result = await audio_storage.save(
+            db=db,
+            file_path=tmp_path,
+            user_id=user_id,
+            business_type=business_type,
+            original_name=file.filename
+        )
+        
+        return {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "audio_id": result['id'],
+                "file_key": result['file_key'],
+                "file_name": result['file_name'],
+                "file_size": result['file_size'],
+                "duration": result.get('duration', 0),
+            }
+        }
+    except Exception as e:
+        raise HTTPException(500, f"上传失败: {str(e)}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+@app.post("/api/v1/performance")
+async def save_performance(
+    user_id: int = Form(...),
+    song_name: str = Form(...),
+    score: float = Form(...),
+    original_audio_id: int = Form(...),
+    tuned_audio_id: Optional[int] = Form(None),
+    db: AsyncSession = Depends(get_db)
+):
+    performance = Performance(
+        user_id=user_id,
+        song_name=song_name,
+        score=score,
+        original_audio_id=original_audio_id,
+        tuned_audio_id=tuned_audio_id
+    )
+    db.add(performance)
+    await db.commit()
+    await db.refresh(performance)
+    
+    return {"code": 0, "message": "success", "data": {"performance_id": performance.id}}
+
+@app.get("/api/v1/audio/{audio_id}")
+async def get_audio(audio_id: int, db: AsyncSession = Depends(get_db)):
+    metadata = await audio_storage.get(db, audio_id)
+    
+    if not metadata:
+        raise HTTPException(404, "音频不存在")
+    
+    physical_path = audio_storage.get_physical_path(metadata['file_key'])
+    
+    if not physical_path:
+        raise HTTPException(404, "音频文件不存在")
+    
+    return FileResponse(
+        path=physical_path,
+        media_type="audio/mpeg",
+        filename=metadata['file_name']
+    )
+
+@app.get("/api/v1/audio/{audio_id}/metadata")
+async def get_audio_metadata(audio_id: int, db: AsyncSession = Depends(get_db)):
+    metadata = await audio_storage.get(db, audio_id)
+    
+    if not metadata:
+        raise HTTPException(404, "音频不存在")
+    
+    return {
+        "code": 0,
+        "message": "success",
+        "data": metadata
+    }
+
+@app.delete("/api/v1/audio/{audio_id}")
+async def delete_audio(audio_id: int, hard: bool = False, db: AsyncSession = Depends(get_db)):
+    try:
+        await audio_storage.delete(db, audio_id, soft_delete=not hard)
+        return {"code": 0, "message": "删除成功"}
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+
+@app.delete("/api/v1/audio/temp")
+async def clean_temp_files(hours: int = 24, db: AsyncSession = Depends(get_db)):
+    count = await audio_storage.clean_temp_files(db, hours)
+    return {"code": 0, "message": "success", "data": {"deleted_count": count}}
 
 if __name__ == "__main__":
     import uvicorn
