@@ -30,21 +30,25 @@ rhythm_analyzer = RhythmAnalyzer()
 structure_analyzer = StructureAnalyzer()
 difficulty_scorer = DifficultyScorer()
 
+
 @app.on_event("startup")
 async def startup_event():
     """启动时创建数据库表"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+
 class GenerateRequest(BaseModel):
     audio: str
     style: str
     duration: int = 30
 
+
 class GenerateResponse(BaseModel):
     success: bool
     audio_url: str
     duration: int
+
 
 MOCK_AUDIO_URLS = [
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
@@ -53,6 +57,7 @@ MOCK_AUDIO_URLS = [
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
     "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
 ]
+
 
 @app.post("/api/generate", response_model=GenerateResponse)
 async def generate_accompaniment(request: GenerateRequest):
@@ -71,22 +76,23 @@ async def generate_accompaniment(request: GenerateRequest):
         duration=request.duration
     )
 
+
 @app.post("/api/v1/analyze")
 async def analyze_song(
-    file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = None,
-    db: AsyncSession = Depends(get_db)
+        file: UploadFile = File(...),
+        background_tasks: BackgroundTasks = None,
+        db: AsyncSession = Depends(get_db)
 ):
     task_id = str(uuid.uuid4())
     temp_path = None
-    
+
     try:
         content = await file.read()
-        
+
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp:
             tmp.write(content)
             temp_path = tmp.name
-        
+
         # 先保存到数据库（processing状态）
         db_analysis = SongAnalysis(
             task_id=task_id,
@@ -95,34 +101,34 @@ async def analyze_song(
         )
         db.add(db_analysis)
         await db.commit()
-        
+
         # 执行分析
         pitch_task = asyncio.create_task(pitch_analyzer.analyze(temp_path))
         rhythm_task = asyncio.create_task(rhythm_analyzer.analyze(temp_path))
         structure_task = asyncio.create_task(structure_analyzer.analyze(temp_path))
-        
+
         pitch_result, rhythm_result, structure_result = await asyncio.gather(
             pitch_task, rhythm_task, structure_task
         )
-        
+
         combined_result = {
             "pitch": pitch_result,
             "rhythm": rhythm_result,
             "structure": structure_result
         }
-        
+
         difficulty_result = await difficulty_scorer.score(combined_result)
-        
+
         tips = []
         if pitch_result['vocal_range'] > 12:
             tips.append("这首歌音域较宽，注意换声区的平滑过渡")
-        
+
         if pitch_result['highest_note'] > 72:
             tips.append("副歌有较高音区，建议用混声/假声演唱")
-        
+
         if rhythm_result['syncopation_score'] > 2:
             tips.append("切分音较多，注意节奏的准确度")
-        
+
         # 更新数据库
         db_analysis.status = "completed"
         db_analysis.lowest_note = pitch_result['lowest_note']
@@ -133,25 +139,25 @@ async def analyze_song(
         db_analysis.mean_pitch = pitch_result['mean_pitch']
         db_analysis.pitch_variation = pitch_result['pitch_variation']
         db_analysis.max_jump = pitch_result['max_jump']
-        
+
         db_analysis.bpm = rhythm_result['bpm']
         db_analysis.beat_count = rhythm_result['beat_count']
         db_analysis.duration_seconds = rhythm_result['duration_seconds']
         db_analysis.syncopation_score = rhythm_result['syncopation_score']
         db_analysis.rhythm_type = rhythm_result['rhythm_type']
-        
+
         db_analysis.segment_count = structure_result['segment_count']
         db_analysis.structure_json = structure_result
-        
+
         db_analysis.difficulty_total = difficulty_result['total']
         db_analysis.difficulty_level = difficulty_result['level']
         db_analysis.difficulty_breakdown = difficulty_result['breakdown']
-        
+
         db_analysis.tips = tips
         db_analysis.analyzed_at = datetime.now()
-        
+
         await db.commit()
-        
+
         result = {
             "task_id": task_id,
             "status": "completed",
@@ -163,9 +169,9 @@ async def analyze_song(
             "difficulty": difficulty_result,
             "tips": tips
         }
-        
+
         return result
-        
+
     except Exception as e:
         error_msg = f"分析失败: {str(e)}"
         try:
@@ -181,14 +187,15 @@ async def analyze_song(
             else:
                 os.remove(temp_path)
 
+
 @app.get("/api/v1/analyze/{task_id}")
 async def get_analysis_result(task_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(SongAnalysis).where(SongAnalysis.task_id == task_id))
     db_analysis = result.scalar_one_or_none()
-    
+
     if not db_analysis:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     return {
         "task_id": db_analysis.task_id,
         "status": db_analysis.status,
@@ -224,6 +231,7 @@ async def get_analysis_result(task_id: str, db: AsyncSession = Depends(get_db)):
         "tips": db_analysis.tips
     }
 
+
 @app.get("/api/v1/history")
 async def get_analysis_history(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -234,7 +242,7 @@ async def get_analysis_history(skip: int = 0, limit: int = 10, db: AsyncSession 
         .limit(limit)
     )
     analyses = result.scalars().all()
-    
+
     return {
         "total": len(analyses),
         "items": [
@@ -249,27 +257,29 @@ async def get_analysis_history(skip: int = 0, limit: int = 10, db: AsyncSession 
         ]
     }
 
+
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
 
+
 @app.post("/api/v1/upload")
 async def upload_audio(
-    file: UploadFile = File(...),
-    user_id: int = Form(...),
-    business_type: str = Form(...),
-    db: AsyncSession = Depends(get_db)
+        file: UploadFile = File(...),
+        user_id: int = Form(...),
+        business_type: str = Form(...),
+        db: AsyncSession = Depends(get_db)
 ):
     allowed_extensions = ['.mp3', '.wav', '.m4a']
     file_ext = f".{file.filename.split('.')[-1]}".lower()
     if file_ext not in allowed_extensions:
         raise HTTPException(400, f"不支持的文件类型，仅支持: {allowed_extensions}")
-    
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
-    
+
     try:
         result = await audio_storage.save(
             db=db,
@@ -278,7 +288,7 @@ async def upload_audio(
             business_type=business_type,
             original_name=file.filename
         )
-        
+
         return {
             "code": 0,
             "message": "success",
@@ -296,14 +306,15 @@ async def upload_audio(
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
+
 @app.post("/api/v1/performance")
 async def save_performance(
-    user_id: int = Form(...),
-    song_name: str = Form(...),
-    score: float = Form(...),
-    original_audio_id: int = Form(...),
-    tuned_audio_id: Optional[int] = Form(None),
-    db: AsyncSession = Depends(get_db)
+        user_id: int = Form(...),
+        song_name: str = Form(...),
+        score: float = Form(...),
+        original_audio_id: int = Form(...),
+        tuned_audio_id: Optional[int] = Form(None),
+        db: AsyncSession = Depends(get_db)
 ):
     performance = Performance(
         user_id=user_id,
@@ -315,39 +326,42 @@ async def save_performance(
     db.add(performance)
     await db.commit()
     await db.refresh(performance)
-    
+
     return {"code": 0, "message": "success", "data": {"performance_id": performance.id}}
+
 
 @app.get("/api/v1/audio/{audio_id}")
 async def get_audio(audio_id: int, db: AsyncSession = Depends(get_db)):
     metadata = await audio_storage.get(db, audio_id)
-    
+
     if not metadata:
         raise HTTPException(404, "音频不存在")
-    
+
     physical_path = audio_storage.get_physical_path(metadata['file_key'])
-    
+
     if not physical_path:
         raise HTTPException(404, "音频文件不存在")
-    
+
     return FileResponse(
         path=physical_path,
         media_type="audio/mpeg",
         filename=metadata['file_name']
     )
 
+
 @app.get("/api/v1/audio/{audio_id}/metadata")
 async def get_audio_metadata(audio_id: int, db: AsyncSession = Depends(get_db)):
     metadata = await audio_storage.get(db, audio_id)
-    
+
     if not metadata:
         raise HTTPException(404, "音频不存在")
-    
+
     return {
         "code": 0,
         "message": "success",
         "data": metadata
     }
+
 
 @app.delete("/api/v1/audio/{audio_id}")
 async def delete_audio(audio_id: int, hard: bool = False, db: AsyncSession = Depends(get_db)):
@@ -357,11 +371,14 @@ async def delete_audio(audio_id: int, hard: bool = False, db: AsyncSession = Dep
     except ValueError as e:
         raise HTTPException(404, str(e))
 
+
 @app.delete("/api/v1/audio/temp")
 async def clean_temp_files(hours: int = 24, db: AsyncSession = Depends(get_db)):
     count = await audio_storage.clean_temp_files(db, hours)
     return {"code": 0, "message": "success", "data": {"deleted_count": count}}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
