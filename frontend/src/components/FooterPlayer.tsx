@@ -51,7 +51,7 @@ export function FooterPlayer({
         audioRef.current.pause();
       }
     }
-  }, [isPlaying]);
+  }, [isPlaying, audioUrl]);
 
   const handlePlayToggle = () => {
     const newPlaying = !isPlaying;

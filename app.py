@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -14,6 +14,8 @@ from services import PitchAnalyzer, RhythmAnalyzer, StructureAnalyzer, Difficult
 from database import get_db, engine
 from models import SongAnalysis, Base, AudioMetadata, Performance, User
 from audio_service import audio_storage
+import urllib.parse
+import httpx
 
 app = FastAPI(title="WanaSing API", version="1.0")
 
@@ -261,6 +263,120 @@ async def get_analysis_history(skip: int = 0, limit: int = 10, db: AsyncSession 
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Music Search (via musicdl, requires Python 3.10+)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/music/search")
+async def search_music(keyword: str = "", source: str = "", page: int = 1):
+    """Search music across 30+ platforms using musicdl."""
+    if not keyword:
+        return {"code": 0, "message": "success", "data": {"results": [], "total": 0}}
+    try:
+        from musicdl import musicdl as _musicdl
+        # Lazy-init singleton client (reused across requests)
+        if not hasattr(search_music, "_client"):
+            default_sources = ['KugouMusicClient', 'QQMusicClient', 'NeteaseMusicClient', 'KuwoMusicClient']
+            search_music._client = _musicdl.MusicClient(music_sources=default_sources)
+        client = search_music._client
+
+        # Always search with all default sources (multi-threaded internally)
+        loop = asyncio.get_running_loop()
+        raw = await loop.run_in_executor(None, client.search, keyword)
+    except Exception as e:
+        raise HTTPException(500, f"搜索失败: {str(e)}")
+
+    results = []
+    for source_name, items in raw.items():
+        for song in items:
+            info = song.todict() if hasattr(song, 'todict') else {}
+            results.append({
+                "source": source_name.replace("MusicClient", ""),
+                "title": info.get("song_name", ""),
+                "artist": info.get("singers", ""),
+                "album": info.get("album", ""),
+                "duration": info.get("duration", ""),
+                "duration_s": info.get("duration_s", 0),
+                "ext": info.get("ext", ""),
+                "file_size": info.get("file_size", ""),
+                "file_size_bytes": info.get("file_size_bytes", 0),
+                "download_url": info.get("download_url", ""),
+                "cover_url": info.get("cover_url", ""),
+                "bitrate": info.get("bitrate", ""),
+            })
+
+    return {"code": 0, "message": "success", "data": {"results": results, "total": len(results)}}
+
+
+@app.get("/api/v1/music/proxy")
+async def proxy_audio(url: str = "", request: Request = None):
+    """Stream audio through backend with proper browser headers and Range support."""
+    if not url:
+        raise HTTPException(400, "缺少 url 参数")
+    try:
+        range_header = request.headers.get("range", "") if request else ""
+        upstream_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "audio/webm,audio/ogg,audio/wav,audio/mp3,audio/mpeg,*/*;q=0.8",
+            "Referer": "https://music.163.com/",
+            "Origin": "https://music.163.com",
+        }
+        if range_header:
+            upstream_headers["Range"] = range_header
+
+        async def stream_audio():
+            async with httpx.AsyncClient() as client:
+                async with client.stream(
+                    "GET", url, headers=upstream_headers, follow_redirects=True, timeout=30
+                ) as resp:
+                    content_type = resp.headers.get("content-type", "audio/mpeg")
+                    content_length = resp.headers.get("content-length")
+                    content_range = resp.headers.get("content-range", "")
+                    accept_ranges = resp.headers.get("accept-ranges", "bytes")
+
+                    # Validate response is actually audio
+                    raw_ct = content_type.split(";")[0].strip().lower()
+                    is_audio = raw_ct.startswith("audio/")
+                    if not is_audio:
+                        yield ("text/plain", "0", "", "", 415)  # Unsupported Media Type
+                        error_msg = f"上游返回 {raw_ct}，非音频内容（链接可能已过期）"
+                        yield error_msg.encode()
+                        return
+
+                    yield (content_type, content_length, content_range, accept_ranges, resp.status_code)
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+
+        gen = stream_audio()
+        meta = await gen.__anext__()
+        ct, cl, cr, ar, status_code = meta
+
+        if status_code == 415:
+            # Non-audio content - read the error message
+            error_bytes = b""
+            async for chunk in gen:
+                error_bytes += chunk
+            raise HTTPException(502, error_bytes.decode() or "链接已过期，请重新搜索")
+        elif status_code == 206:
+            resp_headers = {
+                "Content-Range": cr,
+                "Accept-Ranges": ar,
+                "Content-Length": str(cl) if cl else "",
+                "Cache-Control": "no-cache",
+            }
+            return StreamingResponse(gen, media_type=ct, status_code=206, headers=resp_headers)
+        else:
+            return StreamingResponse(
+                gen,
+                media_type=ct,
+                headers={"Accept-Ranges": "bytes", "Cache-Control": "no-cache"},
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"代理请求失败: {str(e)}")
 
 
 @app.post("/api/v1/upload")

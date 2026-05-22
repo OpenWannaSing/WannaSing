@@ -12,8 +12,10 @@ import { CommentModal, mockComments } from './components/CommentModal';
 import { FootprintPage } from './components/FootprintPage';
 import { ChallengeDetail } from './components/ChallengeDetail';
 import { RecommendMenu, type RecommendType } from './components/RecommendMenu';
+import { SearchMenu } from './components/SearchMenu';
+import type { SearchResult } from './components/SearchMenu';
 
-type Page = 'recommend' | 'plaza' | 'create' | 'analyse' | 'footprint';
+type Page = 'recommend' | 'plaza' | 'create' | 'analyse' | 'footprint' | 'search';
 
 interface Song {
   id: string;
@@ -203,6 +205,10 @@ function App() {
   const [currentSongIndex, setCurrentSongIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playMode, setPlayMode] = useState<PlayMode>('sequential');
+  const [searchSongs, setSearchSongs] = useState<Song[]>([]);
+
+  // Combine mock songs + search songs for the playlist
+  const allSongs = [...mockSongs, ...searchSongs];
   
   const togglePlayMode = () => {
     const modes: PlayMode[] = ['sequential', 'loop', 'random'];
@@ -213,9 +219,28 @@ function App() {
   const [commentModalOpen, setCommentModalOpen] = useState(false);
   const [viewingChallenge, setViewingChallenge] = useState<Challenge | null>(null);
 
-  const currentSong = mockSongs[currentSongIndex] || null;
+  const currentSong = allSongs[currentSongIndex] || null;
 
   const { isRecording, startRecording, stopRecording } = useRecorder();
+
+  const handleSearchPlay = (result: SearchResult) => {
+    const proxyUrl = `${import.meta.env.VITE_API_URL || ''}/api/v1/music/proxy?url=${encodeURIComponent(result.download_url)}`;
+    const newSong: Song = {
+      id: `search-${Date.now()}`,
+      title: result.title,
+      artist: result.artist,
+      cover: result.cover_url || 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=100',
+      audioUrl: proxyUrl,
+      isTop: undefined,
+    };
+    const newIndex = allSongs.length; // index will be at the end
+    setSearchSongs(prev => [...prev, newSong]);
+    // Need to wait for state update, so set index after
+    setTimeout(() => {
+      setCurrentSongIndex(newIndex);
+      setIsPlaying(true);
+    }, 0);
+  };
 
   const handlePlayToggle = () => {
     setIsPlaying(!isPlaying);
@@ -223,9 +248,9 @@ function App() {
 
   const handlePrevSong = () => {
     if (playMode === 'random') {
-      setCurrentSongIndex(Math.floor(Math.random() * mockSongs.length));
+      setCurrentSongIndex(Math.floor(Math.random() * allSongs.length));
     } else {
-      const newIndex = currentSongIndex === 0 ? mockSongs.length - 1 : currentSongIndex - 1;
+      const newIndex = currentSongIndex === 0 ? allSongs.length - 1 : currentSongIndex - 1;
       setCurrentSongIndex(newIndex);
       setIsPlaying(true);
     }
@@ -233,9 +258,9 @@ function App() {
 
   const handleNextSong = () => {
     if (playMode === 'random') {
-      setCurrentSongIndex(Math.floor(Math.random() * mockSongs.length));
+      setCurrentSongIndex(Math.floor(Math.random() * allSongs.length));
     } else {
-      const newIndex = currentSongIndex === mockSongs.length - 1 ? 0 : currentSongIndex + 1;
+      const newIndex = currentSongIndex === allSongs.length - 1 ? 0 : currentSongIndex + 1;
       setCurrentSongIndex(newIndex);
       setIsPlaying(true);
     }
@@ -245,9 +270,9 @@ function App() {
     if (playMode === 'loop') {
       return;
     } else if (playMode === 'random') {
-      setCurrentSongIndex(Math.floor(Math.random() * mockSongs.length));
+      setCurrentSongIndex(Math.floor(Math.random() * allSongs.length));
     } else {
-      if (currentSongIndex < mockSongs.length - 1) {
+      if (currentSongIndex < allSongs.length - 1) {
         setCurrentSongIndex(currentSongIndex + 1);
       } else {
         setIsPlaying(false);
@@ -294,6 +319,7 @@ function App() {
   };
 
   const navItems = [
+    { id: 'search', label: '搜索', icon: '🔍' },
     { id: 'recommend', label: '推荐', icon: '⭐' },
     { id: 'plaza', label: '音乐广场', icon: '🎵' },
     { id: 'footprint', label: '我的足迹', icon: '📜' },
@@ -381,6 +407,19 @@ function App() {
 
         <div className="px-8 py-6">
           <AnimatePresence mode="wait">
+            {/* 搜索页面 */}
+            {currentPage === 'search' && (
+              <motion.div
+                key="search"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <h2 className="text-2xl font-bold text-text-primary mb-6">🔍 搜索音乐</h2>
+                <SearchMenu onPlay={handleSearchPlay} />
+              </motion.div>
+            )}
+
             {/* 推荐页面 */}
             {currentPage === 'recommend' && (
               <motion.div
