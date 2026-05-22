@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, JSON, DateTime, ForeignKey, DECIMAL
+from sqlalchemy import Column, Integer, String, Float, Text, JSON, DateTime, ForeignKey, DECIMAL, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from database import Base
@@ -56,6 +56,31 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     email = Column(String(100), unique=True, nullable=True)
     nickname = Column(String(50), nullable=True)
+    avatar_url = Column(String(500), nullable=True)
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class PlayHistory(Base):
+    __tablename__ = "play_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    artist = Column(String(100), nullable=False, default='')
+    cover = Column(String(500), nullable=False, default='')
+    audio_url = Column(String(1000), nullable=False)
+    played_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Favorite(Base):
+    __tablename__ = "favorites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    artist = Column(String(100), nullable=False, default='')
+    cover = Column(String(500), nullable=False, default='')
+    audio_url = Column(String(1000), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class SongAnalysis(Base):

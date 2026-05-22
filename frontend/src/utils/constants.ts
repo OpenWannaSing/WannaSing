@@ -21,3 +21,6 @@ export const SUGGESTED_DURATION = '8-15';
 
 export const STORAGE_KEY = 'wanasing_history';
 export const MAX_HISTORY = 10;
+
+export const PLAY_HISTORY_KEY = 'wanasing_play_history';
+export const MAX_PLAY_HISTORY = 50;

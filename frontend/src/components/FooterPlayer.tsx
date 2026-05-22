@@ -7,12 +7,14 @@ interface FooterPlayerProps {
   artist?: string;
   cover?: string;
   isPlaying?: boolean;
-  playMode?: 'sequential' | 'loop' | 'random';
+  playMode?: 'sequential' | 'loop' | 'single' | 'random';
   onPlayToggle?: () => void;
   onPrev?: () => void;
   onNext?: () => void;
   onEnded?: () => void;
   onTogglePlayMode?: () => void;
+  isFavorited?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 export function FooterPlayer({
@@ -26,7 +28,9 @@ export function FooterPlayer({
   onPrev,
   onNext,
   onEnded,
-  onTogglePlayMode
+  onTogglePlayMode,
+  isFavorited,
+  onToggleFavorite,
 }: FooterPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -101,7 +105,7 @@ export function FooterPlayer({
   };
 
   const handleEnded = () => {
-    if (playMode !== 'loop') {
+    if (playMode !== 'loop' && playMode !== 'single') {
       setIsPlaying(false);
     }
     onEnded?.();
@@ -129,6 +133,8 @@ export function FooterPlayer({
 
   const getPlayModeIcon = () => {
     switch (playMode) {
+      case 'single':
+        return '🔂';
       case 'loop':
         return '🔁';
       case 'random':
@@ -140,8 +146,10 @@ export function FooterPlayer({
 
   const getPlayModeLabel = () => {
     switch (playMode) {
+      case 'single':
+        return '单曲循环';
       case 'loop':
-        return '循环播放';
+        return '列表循环';
       case 'random':
         return '随机播放';
       default:
@@ -159,7 +167,7 @@ export function FooterPlayer({
         <audio
           ref={audioRef}
           src={audioUrl}
-          loop={playMode === 'loop'}
+          loop={playMode === 'single'}
           crossOrigin="anonymous"
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
@@ -182,17 +190,33 @@ export function FooterPlayer({
               className="w-full h-full object-cover"
             />
           </motion.div>
-          <div className="hidden sm:block">
-            <h4 className="text-text-primary font-medium text-sm truncate max-w-[150px]">
-              {title}
-            </h4>
-            <p className="text-text-secondary text-xs truncate max-w-[150px]">
-              {artist}
-            </p>
-            {hasError && (
-              <p className="text-red-400 text-xs mt-1">
-                ⚠️ 音频加载失败
+          <div className="hidden sm:flex items-center gap-2">
+            <div>
+              <h4 className="text-text-primary font-medium text-sm truncate max-w-[150px]">
+                {title}
+              </h4>
+              <p className="text-text-secondary text-xs truncate max-w-[150px]">
+                {artist}
               </p>
+              {hasError && (
+                <p className="text-red-400 text-xs mt-1">
+                  ⚠️ 音频加载失败
+                </p>
+              )}
+            </div>
+            {/* Like button */}
+            {audioUrl && (
+              <motion.button
+                whileHover={{ scale: 1.15 }}
+                whileTap={{ scale: 0.9 }}
+                onClick={onToggleFavorite}
+                className={`text-xl transition-colors ${
+                  isFavorited ? 'text-red-400' : 'text-text-secondary hover:text-red-400'
+                }`}
+                title={isFavorited ? '取消喜欢' : '我喜欢'}
+              >
+                {isFavorited ? '❤️' : '🤍'}
+              </motion.button>
             )}
           </div>
         </div>
@@ -200,13 +224,15 @@ export function FooterPlayer({
         <div className="flex-1 max-w-2xl">
           <div className="flex items-center justify-center gap-4 mb-2">
             <button
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
-              title={getPlayModeLabel()}
+              className="px-3 py-1 rounded-full text-xs font-medium border transition-all flex items-center gap-1.5
+                text-text-secondary border-primary/20 hover:border-primary/50 hover:text-text-primary"
+              title={`播放模式: ${getPlayModeLabel()}，点击切换`}
               onClick={onTogglePlayMode}
             >
-              <span className={`text-lg ${playMode === 'loop' || playMode === 'random' ? 'text-primary' : ''}`}>
+              <span className={`${playMode === 'loop' || playMode === 'single' || playMode === 'random' ? 'text-primary' : ''}`}>
                 {getPlayModeIcon()}
               </span>
+              <span className="text-text-secondary">{getPlayModeLabel()}</span>
             </button>
 
             <button
@@ -232,13 +258,6 @@ export function FooterPlayer({
               onClick={onNext}
             >
               <span className="text-lg">⏭</span>
-            </button>
-
-            <button
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
-              title={getPlayModeLabel()}
-            >
-              <span className="text-lg">📜</span>
             </button>
           </div>
 

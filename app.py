@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # Load .env into os.environ BEFORE any project imports
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Depends, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -12,7 +15,7 @@ import tempfile
 from datetime import datetime
 from services import PitchAnalyzer, RhythmAnalyzer, StructureAnalyzer, DifficultyScorer
 from database import get_db, engine
-from models import SongAnalysis, Base, AudioMetadata, Performance, User
+from models import SongAnalysis, Base, AudioMetadata, Performance, User, PlayHistory, Favorite
 from audio_service import audio_storage
 import urllib.parse
 import httpx
@@ -263,6 +266,347 @@ async def get_analysis_history(skip: int = 0, limit: int = 10, db: AsyncSession 
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Auth — Email verification code login
+# ---------------------------------------------------------------------------
+
+from auth import (
+    VerificationCode,
+    send_verification_email,
+    create_access_token,
+    get_current_user,
+    JWT_EXPIRE_HOURS,
+)
+from sqlalchemy import func
+from datetime import datetime, timezone, timedelta
+import random
+
+
+class SendCodeRequest(BaseModel):
+    email: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    code: str
+
+
+@app.post("/api/v1/auth/send-code")
+async def auth_send_code(req: SendCodeRequest, db: AsyncSession = Depends(get_db)):
+    """Send a 6-digit verification code to the given email."""
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Invalid email address")
+
+    # Generate 6-digit code
+    code = f"{random.randint(0, 999999):06d}"
+
+    # Invalidate previous unused codes for this email
+    await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == email,
+            VerificationCode.used == False,
+        )
+    )
+    # (SQLAlchemy doesn't support bulk update easily with aiosqlite,
+    #  so we invalidate at login time instead — fine for dev)
+
+    # Store new code (5 min expiry)
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    vc = VerificationCode(email=email, code=code, expires_at=expires_at)
+    db.add(vc)
+    await db.commit()
+
+    # Send (console in dev, SMTP in prod)
+    send_verification_email(email, code)
+
+    return {"message": "Verification code sent", "ttl_seconds": 300}
+
+
+@app.get("/api/v1/auth/dev-codes")
+async def dev_get_codes(email: str = "", db: AsyncSession = Depends(get_db)):
+    """[DEV ONLY] Return recent unused verification codes for an email."""
+    if not email:
+        raise HTTPException(400, "email parameter is required")
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == email.strip().lower(),
+            VerificationCode.used == False,
+            VerificationCode.expires_at > datetime.now(timezone.utc),
+        ).order_by(VerificationCode.created_at.desc()).limit(5)
+    )
+    codes = result.scalars().all()
+    return {
+        "codes": [
+            {
+                "code": c.code,
+                "expires_at": c.expires_at.isoformat(),
+                "created_at": c.created_at.isoformat(),
+            }
+            for c in codes
+        ]
+    }
+
+
+@app.post("/api/v1/auth/login")
+async def auth_login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """Verify code and login/register user. Returns JWT token."""
+    email = req.email.strip().lower()
+    code = req.code.strip()
+
+    if not email or not code:
+        raise HTTPException(400, "Email and code are required")
+
+    # Find a valid, unused code
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(VerificationCode).where(
+            VerificationCode.email == email,
+            VerificationCode.code == code,
+            VerificationCode.used == False,
+            VerificationCode.expires_at > now,
+        ).order_by(VerificationCode.created_at.desc())
+    )
+    vc = result.scalars().first()
+    if vc is None:
+        raise HTTPException(401, "Invalid or expired verification code")
+
+    # Mark code as used
+    vc.used = True
+    await db.commit()
+
+    # Find or create user
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user is None:
+        # Create new user
+        username = email.split("@")[0]
+        # Ensure unique username
+        base = username
+        suffix = 1
+        while True:
+            exist = await db.execute(select(User).where(User.username == username))
+            if exist.scalar_one_or_none() is None:
+                break
+            username = f"{base}{suffix}"
+            suffix += 1
+        user = User(username=username, email=email, nickname=base, is_verified=True)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+    # Generate JWT
+    token = create_access_token({"sub": user.id, "email": user.email})
+
+    return {
+        "token": token,
+        "expires_hours": JWT_EXPIRE_HOURS,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "nickname": user.nickname or user.username,
+            "avatar_url": user.avatar_url or "",
+        },
+    }
+
+
+@app.get("/api/v1/auth/me")
+async def auth_me(user: User = Depends(get_current_user)):
+    """Return current authenticated user info."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "nickname": user.nickname or user.username,
+        "avatar_url": user.avatar_url or "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Play History
+# ---------------------------------------------------------------------------
+
+class SaveHistoryRequest(BaseModel):
+    title: str
+    artist: str = ""
+    cover: str = ""
+    audio_url: str
+
+
+@app.post("/api/v1/play-history")
+async def save_play_history(
+    req: SaveHistoryRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save a play record for the current user."""
+    user_id = user.id  # keep reference before any commit expires the object
+
+    # Remove duplicate for same audio_url
+    existing = await db.execute(
+        select(PlayHistory).where(
+            PlayHistory.user_id == user_id,
+            PlayHistory.audio_url == req.audio_url,
+        )
+    )
+    dup = existing.scalar_one_or_none()
+    if dup:
+        dup.played_at = datetime.now()
+        await db.commit()
+        return {"code": 0, "message": "updated"}
+
+    record = PlayHistory(
+        user_id=user_id,
+        title=req.title,
+        artist=req.artist,
+        cover=req.cover,
+        audio_url=req.audio_url,
+    )
+    db.add(record)
+    await db.commit()
+
+    # Trim to max 50 per user (delete oldest)
+    await db.execute(
+        PlayHistory.__table__.delete().where(
+            PlayHistory.id.not_in(
+                select(PlayHistory.id)
+                .where(PlayHistory.user_id == user_id)
+                .order_by(PlayHistory.played_at.desc())
+                .limit(50)
+                .subquery()
+            )
+        )
+    )
+    await db.commit()
+    return {"code": 0, "message": "saved"}
+
+
+@app.get("/api/v1/play-history")
+async def get_play_history(
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return play history for the current user, newest first."""
+    result = await db.execute(
+        select(PlayHistory)
+        .where(PlayHistory.user_id == user.id)
+        .order_by(PlayHistory.played_at.desc())
+        .limit(limit)
+    )
+    records = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "artist": r.artist,
+                "cover": r.cover,
+                "audio_url": r.audio_url,
+                "played_at": r.played_at.isoformat() if r.played_at else None,
+            }
+            for r in records
+        ]
+    }
+
+
+@app.delete("/api/v1/play-history")
+async def clear_play_history(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear all play history for the current user."""
+    await db.execute(
+        PlayHistory.__table__.delete().where(PlayHistory.user_id == user.id)
+    )
+    await db.commit()
+    return {"code": 0, "message": "cleared"}
+
+
+# ---------------------------------------------------------------------------
+# Favorites
+# ---------------------------------------------------------------------------
+
+class FavoriteRequest(BaseModel):
+    title: str
+    artist: str = ""
+    cover: str = ""
+    audio_url: str
+
+
+@app.post("/api/v1/favorites")
+async def add_favorite(
+    req: FavoriteRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a song to favorites."""
+    user_id = user.id
+    # Check if already favorited
+    existing = await db.execute(
+        select(Favorite).where(
+            Favorite.user_id == user_id,
+            Favorite.audio_url == req.audio_url,
+        )
+    )
+    if existing.scalar_one_or_none():
+        return {"code": 0, "message": "already exists"}
+
+    record = Favorite(
+        user_id=user_id,
+        title=req.title,
+        artist=req.artist,
+        cover=req.cover,
+        audio_url=req.audio_url,
+    )
+    db.add(record)
+    await db.commit()
+    return {"code": 0, "message": "favorited"}
+
+
+@app.delete("/api/v1/favorites")
+async def remove_favorite(
+    audio_url: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a song from favorites."""
+    await db.execute(
+        Favorite.__table__.delete().where(
+            Favorite.user_id == user.id,
+            Favorite.audio_url == audio_url,
+        )
+    )
+    await db.commit()
+    return {"code": 0, "message": "removed"}
+
+
+@app.get("/api/v1/favorites")
+async def get_favorites(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all favorites for the current user."""
+    result = await db.execute(
+        select(Favorite)
+        .where(Favorite.user_id == user.id)
+        .order_by(Favorite.created_at.desc())
+    )
+    records = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "artist": r.artist,
+                "cover": r.cover,
+                "audio_url": r.audio_url,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in records
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FooterPlayer } from './components/FooterPlayer';
 import { AudioVisualizer } from './components/AudioVisualizer';
@@ -14,8 +14,17 @@ import { ChallengeDetail } from './components/ChallengeDetail';
 import { RecommendMenu, type RecommendType } from './components/RecommendMenu';
 import { SearchMenu } from './components/SearchMenu';
 import type { SearchResult } from './components/SearchMenu';
+import { LoginModal } from './components/LoginModal';
+import { getMe } from './utils/api';
+import type { User } from './utils/api';
+import { HistoryList, getPlayHistory, saveToPlayHistory, clearPlayHistory } from './components/HistoryList';
+import type { PlayHistoryItem } from './components/HistoryList';
+import { savePlayHistory, getPlayHistoryFromApi, clearPlayHistoryOnApi } from './utils/api';
+import { FavoritesList, getFavorites, addToFavorites, removeFromFavorites, isFavorite } from './components/FavoritesList';
+import type { FavoriteItem } from './components/FavoritesList';
+import { addFavorite, removeFavorite, getFavoritesFromApi } from './utils/api';
 
-type Page = 'recommend' | 'plaza' | 'create' | 'analyse' | 'footprint' | 'search';
+type Page = 'recommend' | 'plaza' | 'create' | 'analyse' | 'footprint' | 'search' | 'history' | 'favorites';
 
 interface Song {
   id: string;
@@ -197,7 +206,7 @@ const mockStarUsers: StarUser[] = [
   }
 ];
 
-type PlayMode = 'sequential' | 'loop' | 'random';
+type PlayMode = 'sequential' | 'loop' | 'single' | 'random';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('plaza');
@@ -211,13 +220,192 @@ function App() {
   const allSongs = [...mockSongs, ...searchSongs];
   
   const togglePlayMode = () => {
-    const modes: PlayMode[] = ['sequential', 'loop', 'random'];
+    const modes: PlayMode[] = ['sequential', 'loop', 'single', 'random'];
     const currentIndex = modes.indexOf(playMode);
     const nextIndex = (currentIndex + 1) % modes.length;
     setPlayMode(modes[nextIndex]);
   };
   const [commentModalOpen, setCommentModalOpen] = useState(false);
   const [viewingChallenge, setViewingChallenge] = useState<Challenge | null>(null);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+
+  // Restore auth token on mount
+  useEffect(() => {
+    const token = localStorage.getItem('wanasing_token');
+    if (token) {
+      getMe()
+        .then(setUser)
+        .catch(() => localStorage.removeItem('wanasing_token'));
+    }
+  }, []);
+
+  const handleLogin = (u: User) => {
+    setUser(u);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('wanasing_token');
+    setUser(null);
+  };
+
+  const [playHistory, setPlayHistory] = useState<PlayHistoryItem[]>(() => getPlayHistory());
+
+  // ── Favorites state ────────────────────────────────────────────────────────
+  const [favorites, setFavorites] = useState<FavoriteItem[]>(() => getFavorites());
+
+  const toggleFavorite = async (song: { title: string; artist: string; cover: string; audioUrl: string }) => {
+    const already = isFavorite(song.audioUrl);
+    if (already) {
+      removeFromFavorites(song.audioUrl);
+      if (user) {
+        removeFavorite(song.audioUrl).catch(() => {});
+      }
+    } else {
+      addToFavorites(song);
+      if (user) {
+        addFavorite({
+          title: song.title,
+          artist: song.artist,
+          cover: song.cover,
+          audio_url: song.audioUrl,
+        }).catch(() => {});
+      }
+    }
+    setFavorites(getFavorites());
+  };
+
+  const handleFavoritePlay = (item: FavoriteItem) => {
+    const index = allSongs.findIndex((s) => s.audioUrl === item.audioUrl);
+    if (index !== -1) {
+      setCurrentSongIndex(index);
+      setIsPlaying(true);
+      return;
+    }
+    const newSong: Song = {
+      id: `fav-${Date.now()}`,
+      title: item.title,
+      artist: item.artist,
+      cover: item.cover,
+      audioUrl: item.audioUrl,
+    };
+    const newIndex = mockSongs.length + searchSongs.length;
+    setSearchSongs((prev) => [...prev, newSong]);
+    setTimeout(() => {
+      setCurrentSongIndex(newIndex);
+      setIsPlaying(true);
+    }, 0);
+  };
+
+  const handleRemoveFavorite = (audioUrl: string) => {
+    removeFromFavorites(audioUrl);
+    if (user) {
+      removeFavorite(audioUrl).catch(() => {});
+    }
+    setFavorites(getFavorites());
+  };
+
+  // Load play history from API on login, merge with localStorage fallback
+  useEffect(() => {
+    if (user) {
+      getPlayHistoryFromApi().then((records) => {
+        const apiItems: PlayHistoryItem[] = records.map((r) => ({
+          id: String(r.id),
+          title: r.title,
+          artist: r.artist,
+          cover: r.cover,
+          audioUrl: r.audio_url,
+          timestamp: new Date(r.played_at).getTime(),
+        }));
+        // Merge: API history takes precedence, append any localStorage-only items
+        const localItems = getPlayHistory();
+        const merged = [...apiItems];
+        for (const local of localItems) {
+          if (!merged.some((m) => m.audioUrl === local.audioUrl)) {
+            merged.push(local);
+          }
+        }
+        setPlayHistory(merged);
+      }).catch(() => {
+        // fallback to localStorage
+        setPlayHistory(getPlayHistory());
+      });
+    } else {
+      setPlayHistory(getPlayHistory());
+    }
+  }, [user]);
+
+  // Track plays: save current song to history when it starts playing
+  useEffect(() => {
+    if (isPlaying && currentSong) {
+      // Always save to localStorage as primary source
+      saveToPlayHistory({
+        title: currentSong.title,
+        artist: currentSong.artist,
+        cover: currentSong.cover,
+        audioUrl: currentSong.audioUrl,
+      });
+
+      // Also save to API if logged in (for cross-device sync)
+      if (user) {
+        savePlayHistory({
+          title: currentSong.title,
+          artist: currentSong.artist,
+          cover: currentSong.cover,
+          audio_url: currentSong.audioUrl,
+        }).then(() => {
+          getPlayHistoryFromApi().then((records) => {
+            const items: PlayHistoryItem[] = records.map((r) => ({
+              id: String(r.id),
+              title: r.title,
+              artist: r.artist,
+              cover: r.cover,
+              audioUrl: r.audio_url,
+              timestamp: new Date(r.played_at).getTime(),
+            }));
+            setPlayHistory(items);
+          }).catch(() => {});
+        }).catch((err) => {
+          console.error('Failed to save play history to API:', err);
+        });
+      }
+
+      // Update local state immediately (optimistic)
+      setPlayHistory(getPlayHistory());
+    }
+  }, [isPlaying, currentSongIndex]);
+
+  const handleHistoryPlay = (item: PlayHistoryItem) => {
+    // First try to find in current playlist
+    const index = allSongs.findIndex((s) => s.audioUrl === item.audioUrl);
+    if (index !== -1) {
+      setCurrentSongIndex(index);
+      setIsPlaying(true);
+      return;
+    }
+    // Not found in playlist — add as a temporary song and play it
+    const newSong: Song = {
+      id: `history-${Date.now()}`,
+      title: item.title,
+      artist: item.artist,
+      cover: item.cover,
+      audioUrl: item.audioUrl,
+    };
+    const newIndex = mockSongs.length + searchSongs.length; // index after append
+    setSearchSongs((prev) => [...prev, newSong]);
+    setTimeout(() => {
+      setCurrentSongIndex(newIndex);
+      setIsPlaying(true);
+    }, 0);
+  };
+
+  const handleClearHistory = () => {
+    if (user) {
+      clearPlayHistoryOnApi().catch(() => {});
+    }
+    clearPlayHistory();
+    setPlayHistory([]);
+  };
 
   const currentSong = allSongs[currentSongIndex] || null;
 
@@ -267,8 +455,13 @@ function App() {
   };
 
   const handleSongEnd = () => {
-    if (playMode === 'loop') {
-      return;
+    if (playMode === 'single') {
+      return; // audio element handles single-track looping
+    } else if (playMode === 'loop') {
+      // List loop: advance to next, wrap to first at end
+      const newIndex = currentSongIndex === allSongs.length - 1 ? 0 : currentSongIndex + 1;
+      setCurrentSongIndex(newIndex);
+      setIsPlaying(true);
     } else if (playMode === 'random') {
       setCurrentSongIndex(Math.floor(Math.random() * allSongs.length));
     } else {
@@ -320,6 +513,8 @@ function App() {
 
   const navItems = [
     { id: 'search', label: '搜索', icon: '🔍' },
+    { id: 'favorites', label: '我喜欢的', icon: '❤️' },
+    { id: 'history', label: '播放历史', icon: '🕐' },
     { id: 'recommend', label: '推荐', icon: '⭐' },
     { id: 'plaza', label: '音乐广场', icon: '🎵' },
     { id: 'footprint', label: '我的足迹', icon: '📜' },
@@ -361,19 +556,39 @@ function App() {
         </nav>
 
         <div className="mt-auto">
-          <div className="bg-surface/80 rounded-xl p-3 flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center">
-              <span className="text-white">👤</span>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => (user ? undefined : setLoginModalOpen(true))}
+            className="w-full bg-surface/80 rounded-xl p-3 flex items-center gap-3 hover:bg-surface transition-colors text-left"
+          >
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+              user
+                ? 'bg-gradient-to-br from-primary to-secondary'
+                : 'bg-surface border border-primary/20'
+            }`}>
+              <span className="text-white text-lg">
+                {user ? (user.nickname.charAt(0).toUpperCase() || '👤') : '👤'}
+              </span>
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-text-primary text-sm font-medium truncate">
-                User
+                {user ? user.nickname : '未登录'}
               </p>
               <p className="text-text-secondary text-xs truncate">
-                登录账户
+                {user ? user.email : '点击登录账户'}
               </p>
             </div>
-          </div>
+            {user && (
+              <button
+                onClick={(e) => { e.stopPropagation(); handleLogout(); }}
+                className="text-text-secondary hover:text-error transition-colors text-xs p-1"
+                title="退出登录"
+              >
+                退出
+              </button>
+            )}
+          </motion.button>
         </div>
       </aside>
 
@@ -398,6 +613,26 @@ function App() {
               <button className="p-2 text-text-secondary hover:text-text-primary hover:bg-surface rounded-xl">
                 🔔
               </button>
+
+              {/* 用户头像 / 登录入口 */}
+              {user ? (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-surface/80 rounded-full border border-primary/10">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white text-xs font-bold">
+                    {user.nickname.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-text-primary text-sm font-medium">{user.nickname}</span>
+                </div>
+              ) : (
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setLoginModalOpen(true)}
+                  className="px-4 py-2 border border-primary/30 text-primary rounded-full font-semibold hover:bg-primary/10 transition-all"
+                >
+                  登录
+                </motion.button>
+              )}
+
               <button className="px-5 py-2 bg-gradient-to-r from-primary to-secondary text-white rounded-full font-semibold hover:opacity-90 transition-all glow-primary">
                 + 发布
               </button>
@@ -417,6 +652,31 @@ function App() {
               >
                 <h2 className="text-2xl font-bold text-text-primary mb-6">🔍 搜索音乐</h2>
                 <SearchMenu onPlay={handleSearchPlay} />
+              </motion.div>
+            )}
+
+            {/* 播放历史页面 */}
+            {currentPage === 'history' && (
+              <motion.div
+                key="history"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <HistoryList history={playHistory} onPlay={handleHistoryPlay} onClear={handleClearHistory} />
+              </motion.div>
+            )}
+
+            {/* 我喜欢的页面 */}
+            {currentPage === 'favorites' && (
+              <motion.div
+                key="favorites"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <h2 className="text-2xl font-bold text-text-primary mb-6">❤️ 我喜欢的音乐</h2>
+                <FavoritesList favorites={favorites} onPlay={handleFavoritePlay} onRemove={handleRemoveFavorite} />
               </motion.div>
             )}
 
@@ -667,6 +927,8 @@ function App() {
           onNext={handleNextSong}
           onEnded={handleSongEnd}
           onTogglePlayMode={togglePlayMode}
+          isFavorited={isFavorite(currentSong.audioUrl)}
+          onToggleFavorite={() => toggleFavorite(currentSong)}
         />
       )}
 
@@ -677,6 +939,13 @@ function App() {
         comments={mockComments}
         onComment={handleCommentSubmit}
         onLikeComment={handleLikeComment}
+      />
+
+      {/* 登录弹窗 */}
+      <LoginModal
+        open={loginModalOpen}
+        onClose={() => setLoginModalOpen(false)}
+        onLogin={handleLogin}
       />
     </div>
   );
