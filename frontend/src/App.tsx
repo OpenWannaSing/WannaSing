@@ -13,7 +13,7 @@ import { FootprintPage } from './components/FootprintPage';
 import { ChallengeDetail } from './components/ChallengeDetail';
 import { RecommendMenu, type RecommendType } from './components/RecommendMenu';
 
-type Page = 'plaza' | 'create' | 'analyse' | 'footprint';
+type Page = 'recommend' | 'plaza' | 'create' | 'analyse' | 'footprint';
 
 interface Song {
   id: string;
@@ -25,8 +25,48 @@ interface Song {
   isTop?: number;
 }
 
-// Mock 歌曲数据 - 已移至 FooterPlayer
-// const mockSongs: Song[] = [ ... ];
+const mockSongs: Song[] = [
+  {
+    id: 'local-test',
+    title: 'AI 生成测试音乐',
+    artist: 'WannaSing AI',
+    cover: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=100',
+    audioUrl: '/api/v1/audio/file/ai_generated/test.mp3',
+    isTop: 1
+  },
+  {
+    id: 'song-1',
+    title: 'SoundHelix Song 1',
+    artist: 'SoundHelix',
+    cover: 'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=100',
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+    isNew: true
+  },
+  {
+    id: 'song-2',
+    title: 'SoundHelix Song 2',
+    artist: 'SoundHelix',
+    cover: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=100',
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+    isTop: 2
+  },
+  {
+    id: 'song-3',
+    title: 'SoundHelix Song 3',
+    artist: 'SoundHelix',
+    cover: 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?w=100',
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
+    isNew: true
+  },
+  {
+    id: 'song-4',
+    title: 'SoundHelix Song 4',
+    artist: 'SoundHelix',
+    cover: 'https://images.unsplash.com/photo-1449247709967-d4461a6a6103?w=100',
+    audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
+    isTop: 3
+  }
+];
 
 interface StarUser {
   id: string;
@@ -155,19 +195,64 @@ const mockStarUsers: StarUser[] = [
   }
 ];
 
+type PlayMode = 'sequential' | 'loop' | 'random';
+
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('plaza');
-  const [feedMode, setFeedMode] = useState<'recommend' | 'following'>('recommend');
-  const [recommendType, setRecommendType] = useState<RecommendType>('hot');
-  const [currentSong] = useState<Song | null>(null);
+  const [recommendType, setRecommendType] = useState<RecommendType>('recommend');
+  const [currentSongIndex, setCurrentSongIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playMode, setPlayMode] = useState<PlayMode>('sequential');
+  
+  const togglePlayMode = () => {
+    const modes: PlayMode[] = ['sequential', 'loop', 'random'];
+    const currentIndex = modes.indexOf(playMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    setPlayMode(modes[nextIndex]);
+  };
   const [commentModalOpen, setCommentModalOpen] = useState(false);
   const [viewingChallenge, setViewingChallenge] = useState<Challenge | null>(null);
+
+  const currentSong = mockSongs[currentSongIndex] || null;
 
   const { isRecording, startRecording, stopRecording } = useRecorder();
 
   const handlePlayToggle = () => {
     setIsPlaying(!isPlaying);
+  };
+
+  const handlePrevSong = () => {
+    if (playMode === 'random') {
+      setCurrentSongIndex(Math.floor(Math.random() * mockSongs.length));
+    } else {
+      const newIndex = currentSongIndex === 0 ? mockSongs.length - 1 : currentSongIndex - 1;
+      setCurrentSongIndex(newIndex);
+      setIsPlaying(true);
+    }
+  };
+
+  const handleNextSong = () => {
+    if (playMode === 'random') {
+      setCurrentSongIndex(Math.floor(Math.random() * mockSongs.length));
+    } else {
+      const newIndex = currentSongIndex === mockSongs.length - 1 ? 0 : currentSongIndex + 1;
+      setCurrentSongIndex(newIndex);
+      setIsPlaying(true);
+    }
+  };
+
+  const handleSongEnd = () => {
+    if (playMode === 'loop') {
+      return;
+    } else if (playMode === 'random') {
+      setCurrentSongIndex(Math.floor(Math.random() * mockSongs.length));
+    } else {
+      if (currentSongIndex < mockSongs.length - 1) {
+        setCurrentSongIndex(currentSongIndex + 1);
+      } else {
+        setIsPlaying(false);
+      }
+    }
   };
 
   const handleFeedPlay = (url: string) => {
@@ -209,6 +294,7 @@ function App() {
   };
 
   const navItems = [
+    { id: 'recommend', label: '推荐', icon: '⭐' },
     { id: 'plaza', label: '音乐广场', icon: '🎵' },
     { id: 'footprint', label: '我的足迹', icon: '📜' },
     { id: 'create', label: '创作中心', icon: '🎤' },
@@ -295,6 +381,81 @@ function App() {
 
         <div className="px-8 py-6">
           <AnimatePresence mode="wait">
+            {/* 推荐页面 */}
+            {currentPage === 'recommend' && (
+              <motion.div
+                key="recommend"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <div className="mb-8">
+                  <h2 className="text-2xl font-bold text-text-primary mb-6">⭐ 推荐音乐</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {mockSongs.map((song, index) => (
+                      <motion.div
+                        key={song.id}
+                        whileHover={{ scale: 1.02, y: -2 }}
+                        className="bg-surface/80 backdrop-blur-xl rounded-2xl p-4 border border-primary/10 cursor-pointer hover:border-primary/30 transition-all"
+                        onClick={() => {
+                          setCurrentSongIndex(index);
+                          setIsPlaying(true);
+                        }}
+                      >
+                        <div className="flex gap-4">
+                          <div className="w-20 h-20 rounded-xl overflow-hidden flex-shrink-0">
+                            <img
+                              src={song.cover}
+                              alt={song.title}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-text-primary font-medium truncate">
+                              {song.title}
+                            </h4>
+                            <p className="text-text-secondary text-sm">{song.artist}</p>
+                            <div className="flex items-center gap-2 mt-2">
+                              {song.isTop && (
+                                <span className="px-2 py-0.5 bg-gradient-to-r from-yellow-500 to-orange-500 text-white text-xs rounded-full">
+                                  TOP {song.isTop}
+                                </span>
+                              )}
+                              {song.isNew && (
+                                <span className="px-2 py-0.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white text-xs rounded-full">
+                                  NEW
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+
+                <RecommendMenu
+                  currentType={recommendType}
+                  onChange={setRecommendType}
+                />
+
+                <div className="mb-8">
+                  <h3 className="text-lg font-semibold text-text-primary mb-4">📝 热门动态</h3>
+                  {mockFeeds.map((feed) => (
+                    <FeedCard
+                      key={feed.feed_id}
+                      feed={feed}
+                      onPlay={handleFeedPlay}
+                      onLike={handleFeedLike}
+                      onComment={handleFeedComment}
+                      onSingAlong={handleFeedSingAlong}
+                      onSave={handleFeedSave}
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
             {/* 广场页面 */}
             {currentPage === 'plaza' && !viewingChallenge && (
               <motion.div
@@ -461,7 +622,12 @@ function App() {
           artist={currentSong.artist}
           cover={currentSong.cover}
           isPlaying={isPlaying}
+          playMode={playMode}
           onPlayToggle={handlePlayToggle}
+          onPrev={handlePrevSong}
+          onNext={handleNextSong}
+          onEnded={handleSongEnd}
+          onTogglePlayMode={togglePlayMode}
         />
       )}
 

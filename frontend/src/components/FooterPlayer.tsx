@@ -7,7 +7,12 @@ interface FooterPlayerProps {
   artist?: string;
   cover?: string;
   isPlaying?: boolean;
+  playMode?: 'sequential' | 'loop' | 'random';
   onPlayToggle?: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
+  onEnded?: () => void;
+  onTogglePlayMode?: () => void;
 }
 
 export function FooterPlayer({
@@ -16,14 +21,20 @@ export function FooterPlayer({
   artist = 'AI Generated',
   cover = 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=100',
   isPlaying: externalPlaying,
-  onPlayToggle
+  playMode = 'sequential',
+  onPlayToggle,
+  onPrev,
+  onNext,
+  onEnded,
+  onTogglePlayMode
 }: FooterPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
-  const [isLooping, setIsLooping] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const [isSeeking, setIsSeeking] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -49,7 +60,7 @@ export function FooterPlayer({
   };
 
   const handleTimeUpdate = () => {
-    if (audioRef.current) {
+    if (audioRef.current && !isSeeking) {
       setCurrentTime(audioRef.current.currentTime);
     }
   };
@@ -60,12 +71,20 @@ export function FooterPlayer({
     }
   };
 
+  const handleSeekStart = () => {
+    setIsSeeking(true);
+  };
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
+    setCurrentTime(time);
     if (audioRef.current) {
       audioRef.current.currentTime = time;
-      setCurrentTime(time);
     }
+  };
+
+  const handleSeekEnd = () => {
+    setIsSeeking(false);
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -81,11 +100,53 @@ export function FooterPlayer({
     }
   };
 
+  const handleEnded = () => {
+    if (playMode !== 'loop') {
+      setIsPlaying(false);
+    }
+    onEnded?.();
+  };
+
+  // Reset error state when audioUrl changes
+  useEffect(() => {
+    setHasError(false);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [audioUrl]);
+
+  const handleError = () => {
+    setHasError(true);
+    setIsPlaying(false);
+    console.error('FooterPlayer: 音频播放失败', audioUrl);
+  };
+
   const formatTime = (time: number) => {
     if (isNaN(time)) return '0:00';
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
+  const getPlayModeIcon = () => {
+    switch (playMode) {
+      case 'loop':
+        return '🔁';
+      case 'random':
+        return '🔀';
+      default:
+        return '➡';
+    }
+  };
+
+  const getPlayModeLabel = () => {
+    switch (playMode) {
+      case 'loop':
+        return '循环播放';
+      case 'random':
+        return '随机播放';
+      default:
+        return '顺序播放';
+    }
   };
 
   return (
@@ -98,10 +159,13 @@ export function FooterPlayer({
         <audio
           ref={audioRef}
           src={audioUrl}
-          loop={isLooping}
+          loop={playMode === 'loop'}
+          crossOrigin="anonymous"
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
-          onEnded={() => setIsPlaying(false)}
+          onEnded={handleEnded}
+          onError={handleError}
+          onLoadStart={() => setHasError(false)}
         />
       )}
 
@@ -125,6 +189,11 @@ export function FooterPlayer({
             <p className="text-text-secondary text-xs truncate max-w-[150px]">
               {artist}
             </p>
+            {hasError && (
+              <p className="text-red-400 text-xs mt-1">
+                ⚠️ 音频加载失败
+              </p>
+            )}
           </div>
         </div>
 
@@ -132,15 +201,17 @@ export function FooterPlayer({
           <div className="flex items-center justify-center gap-4 mb-2">
             <button
               className="p-2 text-text-secondary hover:text-text-primary transition-colors"
-              onClick={() => setIsLooping(!isLooping)}
+              title={getPlayModeLabel()}
+              onClick={onTogglePlayMode}
             >
-              <span className={`text-lg ${isLooping ? 'text-primary' : ''}`}>
-                🔁
+              <span className={`text-lg ${playMode === 'loop' || playMode === 'random' ? 'text-primary' : ''}`}>
+                {getPlayModeIcon()}
               </span>
             </button>
 
             <button
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors hidden sm:block"
+              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+              onClick={onPrev}
             >
               <span className="text-lg">⏮</span>
             </button>
@@ -157,15 +228,17 @@ export function FooterPlayer({
             </motion.button>
 
             <button
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors hidden sm:block"
+              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+              onClick={onNext}
             >
               <span className="text-lg">⏭</span>
             </button>
 
             <button
-              className="p-2 text-text-secondary hover:text-text-primary transition-colors hidden sm:block"
+              className="p-2 text-text-secondary hover:text-text-primary transition-colors"
+              title={getPlayModeLabel()}
             >
-              <span className="text-lg">🔀</span>
+              <span className="text-lg">📜</span>
             </button>
           </div>
 
@@ -180,6 +253,10 @@ export function FooterPlayer({
                 max={duration || 100}
                 value={currentTime}
                 onChange={handleSeek}
+                onMouseDown={handleSeekStart}
+                onMouseUp={handleSeekEnd}
+                onTouchStart={handleSeekStart}
+                onTouchEnd={handleSeekEnd}
                 className="w-full h-1 bg-surface rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:hover:scale-125 [&::-webkit-slider-thumb]:transition-transform"
                 style={{
                   background: `linear-gradient(to right, #6C63FF ${(currentTime / (duration || 1)) * 100}%, #1E1E1E ${(currentTime / (duration || 1)) * 100}%)`

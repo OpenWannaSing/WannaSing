@@ -330,6 +330,21 @@ async def save_performance(
     return {"code": 0, "message": "success", "data": {"performance_id": performance.id}}
 
 
+@app.get("/api/v1/audio/file/{business_type}/{filename}")
+async def get_audio_by_path(business_type: str, filename: str):
+    audio_root = os.getenv('AUDIO_ROOT', './.wannasing/data/audio')
+    file_path = os.path.join(audio_root, business_type, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(404, "音频文件不存在")
+    
+    return FileResponse(
+        path=file_path,
+        media_type="audio/mpeg",
+        filename=filename
+    )
+
+
 @app.get("/api/v1/audio/{audio_id}")
 async def get_audio(audio_id: int, db: AsyncSession = Depends(get_db)):
     metadata = await audio_storage.get(db, audio_id)

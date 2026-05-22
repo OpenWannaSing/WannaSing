@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 
-export type RecommendType = 'hot' | 'new' | 'following' | 'similar' | 'challenge';
+export type RecommendType = 'recommend' | 'hot' | 'new' | 'following' | 'similar' | 'challenge';
 
 interface RecommendMenuProps {
   currentType: RecommendType;
@@ -15,6 +15,12 @@ interface RecommendOption {
 }
 
 const recommendOptions: RecommendOption[] = [
+  {
+    id: 'recommend',
+    label: '🎵 推荐',
+    icon: '🎵',
+    description: '为你精选的音乐'
+  },
   {
     id: 'hot',
     label: '🔥 热门推荐',
@@ -51,7 +57,7 @@ export function RecommendMenu({ currentType, onChange }: RecommendMenuProps) {
   return (
     <div className="mb-8">
       <h3 className="text-lg font-semibold text-text-primary mb-4">📋 推荐菜单</h3>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {recommendOptions.map((option) => (
           <motion.button
             key={option.id}
