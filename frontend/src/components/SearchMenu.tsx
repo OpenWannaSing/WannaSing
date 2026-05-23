@@ -89,11 +89,6 @@ export function SearchMenu({ onPlay }: SearchMenuProps) {
     onPlay(song);
   };
 
-  const playUrl = (result: SearchResult) => {
-    // Use proxy endpoint to avoid CORS
-    return `${API_BASE}/api/v1/music/proxy?url=${encodeURIComponent(result.download_url)}`;
-  };
-
   return (
     <div className="space-y-6">
       {/* Search Input */}

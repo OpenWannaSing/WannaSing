@@ -22,7 +22,7 @@ import type { PlayHistoryItem } from './components/HistoryList';
 import { savePlayHistory, getPlayHistoryFromApi, clearPlayHistoryOnApi } from './utils/api';
 import { FavoritesList, getFavorites, addToFavorites, removeFromFavorites, isFavorite } from './components/FavoritesList';
 import type { FavoriteItem } from './components/FavoritesList';
-import { addFavorite, removeFavorite, getFavoritesFromApi } from './utils/api';
+import { addFavorite, removeFavorite } from './utils/api';
 
 type Page = 'recommend' | 'plaza' | 'create' | 'analyse' | 'footprint' | 'search' | 'history' | 'favorites';
 

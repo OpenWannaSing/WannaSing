@@ -1,0 +1,25 @@
+# 核心框架
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# 数据库
+sqlalchemy==2.0.23
+aiosqlite==0.19.0
+
+# 工具
+python-multipart==0.0.6
+aiofiles==23.2.1
+python-dotenv==1.0.0
+cryptography==41.0.7
+requests==2.31.0
+
+# 认证
+pyjwt==2.8.0
+
+# HTTP 客户端
+httpx==0.25.2
+
+# 音频元信息（轻量，不含 librosa）
+mutagen==1.47.0

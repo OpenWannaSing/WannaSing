@@ -13,7 +13,6 @@ import asyncio
 import os
 import tempfile
 from datetime import datetime
-from services import PitchAnalyzer, RhythmAnalyzer, StructureAnalyzer, DifficultyScorer
 from database import get_db, engine
 from models import SongAnalysis, Base, AudioMetadata, Performance, User, PlayHistory, Favorite
 from audio_service import audio_storage
@@ -30,10 +29,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-pitch_analyzer = PitchAnalyzer()
-rhythm_analyzer = RhythmAnalyzer()
-structure_analyzer = StructureAnalyzer()
-difficulty_scorer = DifficultyScorer()
+# Lazy import for analysis services — only load if librosa is available
+try:
+    from services import PitchAnalyzer, RhythmAnalyzer, StructureAnalyzer, DifficultyScorer
+    pitch_analyzer = PitchAnalyzer()
+    rhythm_analyzer = RhythmAnalyzer()
+    structure_analyzer = StructureAnalyzer()
+    difficulty_scorer = DifficultyScorer()
+    _ANALYSIS_AVAILABLE = True
+except ImportError as _analysis_e:
+    print(f"[WARN] Analysis services not available: {_analysis_e}")
+    pitch_analyzer = rhythm_analyzer = structure_analyzer = difficulty_scorer = None
+    _ANALYSIS_AVAILABLE = False
 
 
 @app.on_event("startup")
@@ -88,6 +95,9 @@ async def analyze_song(
         background_tasks: BackgroundTasks = None,
         db: AsyncSession = Depends(get_db)
 ):
+    if not _ANALYSIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="音频分析服务未部署（需要 librosa）")
+
     task_id = str(uuid.uuid4())
     temp_path = None
 
@@ -851,6 +861,14 @@ async def delete_audio(audio_id: int, hard: bool = False, db: AsyncSession = Dep
 async def clean_temp_files(hours: int = 24, db: AsyncSession = Depends(get_db)):
     count = await audio_storage.clean_temp_files(db, hours)
     return {"code": 0, "message": "success", "data": {"deleted_count": count}}
+
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "analysis_available": _ANALYSIS_AVAILABLE,
+    }
 
 
 if __name__ == "__main__":
