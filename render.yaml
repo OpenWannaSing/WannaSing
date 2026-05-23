@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: wannasing-api
+    env: python
+    buildCommand: pip install -r requirements-render.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # 在 Render Dashboard 手动设置
+      - key: VITE_API_URL
+        sync: false
+      - fromGroup: smtp-config
+      - key: JWT_SECRET
+        generateValue: true
+
+envVarGroups:
+  - name: smtp-config
+    envVars:
+      - key: SMTP_HOST
+        value: smtp.163.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        value: wannasing2026@163.com
+      - key: SMTP_PASS
+        sync: false  # 在 Dashboard 设置
+      - key: SMTP_USE_SSL
+        value: "true"
