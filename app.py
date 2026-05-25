@@ -623,11 +623,30 @@ async def get_favorites(
 # Music Search (via musicdl, requires Python 3.10+)
 # ---------------------------------------------------------------------------
 
+# Search cache: in-memory, keyed by normalized keyword
+import time
+from collections import OrderedDict
+
+_search_cache = OrderedDict()
+_SEARCH_CACHE_TTL = 300       # 5 minutes
+_SEARCH_CACHE_MAX_ENTRIES = 200
+
+
 @app.get("/api/v1/music/search")
 async def search_music(keyword: str = "", source: str = "", page: int = 1):
-    """Search music across 30+ platforms using musicdl."""
+    """Search music across 30+ platforms using musicdl. Results cached in memory."""
     if not keyword:
         return {"code": 0, "message": "success", "data": {"results": [], "total": 0}}
+
+    cache_key = keyword.lower().strip()
+    cached = _search_cache.get(cache_key)
+    if cached and (time.time() - cached["ts"]) < _SEARCH_CACHE_TTL:
+        return {
+            "code": 0,
+            "message": "success",
+            "data": {"results": cached["data"], "total": len(cached["data"])},
+        }
+
     try:
         from musicdl import musicdl as _musicdl
         # Lazy-init singleton client (reused across requests)
@@ -660,6 +679,11 @@ async def search_music(keyword: str = "", source: str = "", page: int = 1):
                 "cover_url": info.get("cover_url", ""),
                 "bitrate": info.get("bitrate", ""),
             })
+
+    # Cache the results
+    _search_cache[cache_key] = {"data": results, "ts": time.time()}
+    while len(_search_cache) > _SEARCH_CACHE_MAX_ENTRIES:
+        _search_cache.popitem(last=False)
 
     return {"code": 0, "message": "success", "data": {"results": results, "total": len(results)}}
 

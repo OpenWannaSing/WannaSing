@@ -21,6 +21,9 @@ interface SearchMenuProps {
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+// Frontend search cache: avoids redundant API calls within the same session
+const _searchCache = new Map<string, SearchResult[]>();
+
 const HOT_QUERIES = [
   { keyword: '七里香 周杰伦', title: '七里香', artist: '周杰伦', emoji: '🌸' },
   { keyword: '起风了 买辣椒也用券', title: '起风了', artist: '买辣椒也用券', emoji: '🍃' },
@@ -39,6 +42,16 @@ export function SearchMenu({ onPlay }: SearchMenuProps) {
   const handleSearch = useCallback(async () => {
     const q = keyword.trim();
     if (!q) return;
+
+    // Check frontend cache first
+    const cached = _searchCache.get(q.toLowerCase());
+    if (cached) {
+      setResults(cached);
+      setSearched(true);
+      setError('');
+      return;
+    }
+
     setLoading(true);
     setError('');
     setSearched(true);
@@ -46,7 +59,10 @@ export function SearchMenu({ onPlay }: SearchMenuProps) {
       const resp = await axios.get(`${API_BASE}/api/v1/music/search`, {
         params: { keyword: q, page: 1 },
       });
-      setResults(resp.data.data.results);
+      const data = resp.data.data.results;
+      // Cache the results
+      _searchCache.set(q.toLowerCase(), data);
+      setResults(data);
     } catch (e: any) {
       setError(e?.response?.data?.detail || '搜索失败，请重试');
       setResults([]);
