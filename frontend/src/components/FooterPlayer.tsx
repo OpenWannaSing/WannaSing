@@ -179,7 +179,7 @@ export function FooterPlayer({
     <motion.div
       initial={{ y: 100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      className="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-primary/20 px-6 py-4 z-50 relative"
+      className="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-primary/20 px-6 py-4 z-50"
     >
       {audioUrl && (
         <audio
@@ -195,9 +195,9 @@ export function FooterPlayer({
         />
       )}
 
-      {/* Auto-skip notification toast */}
+      {/* Auto-skip notification toast - positioned above the player */}
       {skipNotification && (
-        <div className="absolute top-0 left-0 right-0 bg-gradient-to-r from-yellow-500/80 to-orange-500/80 text-white text-xs text-center py-1.5 font-medium backdrop-blur-sm">
+        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto max-w-7xl bg-gradient-to-r from-yellow-500/90 to-orange-500/90 text-white text-xs text-center py-2 px-4 rounded-xl font-medium backdrop-blur-sm shadow-lg">
           {skipNotification}
         </div>
       )}
