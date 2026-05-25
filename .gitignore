@@ -39,3 +39,6 @@ env/
 .wannasing/
 wanasing.db
 *.db
+
+# musicdl 缓存
+musicdl_outputs/

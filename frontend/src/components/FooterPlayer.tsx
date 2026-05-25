@@ -38,7 +38,9 @@ export function FooterPlayer({
   const [volume, setVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [isSeeking, setIsSeeking] = useState(false);
+  const [skipNotification, setSkipNotification] = useState('');
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -114,14 +116,30 @@ export function FooterPlayer({
   // Reset error state when audioUrl changes
   useEffect(() => {
     setHasError(false);
+    setErrorMsg('');
     setCurrentTime(0);
     setDuration(0);
   }, [audioUrl]);
-
+  
   const handleError = () => {
+    // Try to determine the specific error from the audio element
+    let msg = '\u97F3\u9891\u52A0\u8F7D\u5931\u8D25';
+    if (audioRef.current?.networkState === 3) {
+      msg = '\u7F51\u7EDC\u9519\u8BEF\uFF0C\u94FE\u63A5\u53EF\u80FD\u5DF2\u8FC7\u671F';
+    } else if (audioRef.current?.error?.code === 4) {
+      msg = '\u97F3\u9891\u89E3\u7801\u5931\u8D25\uFF08\u4E0D\u652F\u6301\u7684\u683C\u5F0F\uFF09';
+    }
+    setErrorMsg(msg);
     setHasError(true);
     setIsPlaying(false);
-    console.error('FooterPlayer: 音频播放失败', audioUrl);
+    console.error('FooterPlayer: \u97F3\u9891\u64AD\u653E\u5931\u8D25', audioUrl, msg);
+  
+    // Auto-skip to next song after a brief moment
+    setSkipNotification(`\u23ED ${title} ${msg}\uFF0C\u81EA\u52A8\u8DF3\u5230\u4E0B\u4E00\u9996`);
+    setTimeout(() => {
+      setSkipNotification('');
+      onNext?.();
+    }, 2000);
   };
 
   const formatTime = (time: number) => {
@@ -161,7 +179,7 @@ export function FooterPlayer({
     <motion.div
       initial={{ y: 100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      className="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-primary/20 px-6 py-4 z-50"
+      className="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-primary/20 px-6 py-4 z-50 relative"
     >
       {audioUrl && (
         <audio
@@ -173,8 +191,15 @@ export function FooterPlayer({
           onLoadedMetadata={handleLoadedMetadata}
           onEnded={handleEnded}
           onError={handleError}
-          onLoadStart={() => setHasError(false)}
+          onLoadStart={() => { setHasError(false); setErrorMsg(''); }}
         />
+      )}
+
+      {/* Auto-skip notification toast */}
+      {skipNotification && (
+        <div className="absolute top-0 left-0 right-0 bg-gradient-to-r from-yellow-500/80 to-orange-500/80 text-white text-xs text-center py-1.5 font-medium backdrop-blur-sm">
+          {skipNotification}
+        </div>
       )}
 
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-6">
@@ -200,7 +225,7 @@ export function FooterPlayer({
               </p>
               {hasError && (
                 <p className="text-red-400 text-xs mt-1">
-                  ⚠️ 音频加载失败
+                  \u26A0\uFE0F {errorMsg}
                 </p>
               )}
             </div>

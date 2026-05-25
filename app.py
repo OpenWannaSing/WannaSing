@@ -695,12 +695,34 @@ async def proxy_audio(url: str = "", request: Request = None):
         raise HTTPException(400, "缺少 url 参数")
     try:
         range_header = request.headers.get("range", "") if request else ""
-        upstream_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "audio/webm,audio/ogg,audio/wav,audio/mp3,audio/mpeg,*/*;q=0.8",
-            "Referer": "https://music.163.com/",
-            "Origin": "https://music.163.com",
-        }
+
+        # Dynamic Referer/Origin based on upstream domain
+        from urllib.parse import urlparse
+        upstream_domain = urlparse(url).hostname or ""
+
+        def _pick_headers(domain: str) -> dict:
+            base = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "audio/webm,audio/ogg,audio/wav,audio/mp3,audio/mpeg,*/*;q=0.8",
+            }
+            if "kuwo" in domain:
+                base["Referer"] = "https://kuwo.cn/"
+                base["Origin"] = "https://kuwo.cn"
+            elif "163" in domain or "126" in domain or "netease" in domain:
+                base["Referer"] = "https://music.163.com/"
+                base["Origin"] = "https://music.163.com"
+            elif "qqmusic" in domain or "y.qq" in domain:
+                base["Referer"] = "https://y.qq.com/"
+                base["Origin"] = "https://y.qq.com"
+            elif "kugou" in domain:
+                base["Referer"] = "https://www.kugou.com/"
+                base["Origin"] = "https://www.kugou.com"
+            else:
+                base["Referer"] = f"https://{domain}/"
+                base["Origin"] = f"https://{domain}"
+            return base
+
+        upstream_headers = _pick_headers(upstream_domain)
         if range_header:
             upstream_headers["Range"] = range_header
 
@@ -722,8 +744,9 @@ async def proxy_audio(url: str = "", request: Request = None):
                         error_msg = f"上游返回 {raw_ct}，非音频内容（链接可能已过期）"
                         yield error_msg.encode()
                         return
-
                     yield (content_type, content_length, content_range, accept_ranges, resp.status_code)
+
+                    # Yield all remaining chunks
                     async for chunk in resp.aiter_bytes():
                         yield chunk
 
@@ -737,17 +760,33 @@ async def proxy_audio(url: str = "", request: Request = None):
             async for chunk in gen:
                 error_bytes += chunk
             raise HTTPException(502, error_bytes.decode() or "链接已过期，请重新搜索")
-        elif status_code == 206:
+
+        # Pre-read first chunk to detect empty body before starting the stream
+        try:
+            first_chunk: bytes = await gen.__anext__()
+        except StopAsyncIteration:
+            raise HTTPException(502, "上游返回空内容，链接可能已过期")
+
+        # Re-wrap the remaining stream including the first chunk
+        async def _remaining_stream(fc: bytes, rest):
+            yield fc
+            async for chunk in rest:
+                yield chunk
+
+        if status_code == 206:
             resp_headers = {
                 "Content-Range": cr,
                 "Accept-Ranges": ar,
                 "Content-Length": str(cl) if cl else "",
                 "Cache-Control": "no-cache",
             }
-            return StreamingResponse(gen, media_type=ct, status_code=206, headers=resp_headers)
+            return StreamingResponse(
+                _remaining_stream(first_chunk, gen),
+                media_type=ct, status_code=206, headers=resp_headers,
+            )
         else:
             return StreamingResponse(
-                gen,
+                _remaining_stream(first_chunk, gen),
                 media_type=ct,
                 headers={"Accept-Ranges": "bytes", "Cache-Control": "no-cache"},
             )
